@@ -21,6 +21,24 @@
   <small>{% if rb_hint %}ذخیره شده ({{ rb_hint }}) · خالی بگذارید تا تغییر نکند.{% else %}اگر خالی بماند، روبیکا برای کاربران غیرفعال است.{% endif %}</small>
 </div>
 <div class="card">
+  <h2>هوش مصنوعی (دستیار و عامل)</h2>
+  <p class="sub">یک کلید برای همه‌ی کاربران؛ هزینه‌ی مصرف با شماست، پس سهمیه‌ی روزانه را تنظیم کنید.</p>
+  <label>سرویس</label>
+  <select name="ai_provider" style="width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit">
+    <option value="anthropic" {{ 'selected' if cfg.ai_provider=='anthropic' }}>Anthropic (Claude)</option>
+    <option value="openai" {{ 'selected' if cfg.ai_provider=='openai' }}>سازگار با OpenAI (OpenAI، OpenRouter، DeepSeek، Gemini و ...)</option>
+  </select>
+  <label>کلید API</label>
+  <input name="ai_api_key" dir="ltr" autocomplete="off" placeholder="{{ ai_hint or 'sk-...' }}">
+  <small>{% if ai_hint %}ذخیره شده ({{ ai_hint }}) · خالی بگذارید تا تغییر نکند.{% else %}بدون کلید، دستیار غیرفعال است.{% endif %}</small>
+  <label>نام مدل (اختیاری)</label>
+  <input name="ai_model" dir="ltr" value="{{ cfg.ai_model }}" placeholder="claude-sonnet-5-5 · gpt-4o-mini">
+  <label>آدرس پایه (فقط برای سرویس‌های سازگار با OpenAI)</label>
+  <input name="ai_base_url" dir="ltr" value="{{ cfg.ai_base_url }}" placeholder="https://openrouter.ai/api/v1">
+  <label>سهمیه‌ی روزانه‌ی هر کاربر (پیام/بررسی؛ ۰ = نامحدود)</label>
+  <input name="ai_daily_limit" dir="ltr" value="{{ cfg.ai_daily_limit }}" required>
+</div>
+<div class="card">
   <h2>برند و متن‌ها</h2>
   <label>نام برند</label><input name="brand_name" value="{{ cfg.brand_name }}">
   <label>متن خوش‌آمدگویی</label><textarea name="welcome_text" rows="3">{{ cfg.welcome_text }}</textarea>
