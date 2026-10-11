@@ -407,18 +407,20 @@ async def _rubika_lookup(m: Message, state: FSMContext, cid: str):
         info = await rubika.lookup_chat(token, cand)
         if info["exists"] is not False:
             break
+    if info["exists"] is True and not rubika.looks_like_guid(str(info.get("chat_id") or "")):
+        info = {"exists": False}  # Rubika can only send to the internal chat id (c0.../g0...)
     await state.update_data(chat_id=info.get("chat_id") or cid, found_title=info.get("title", ""))
     if info["exists"] is True:
         txt = (f"پیدا شد\n\nنوع: {KIND_FA.get(info['kind'], KIND_FA['unknown'])}\n"
                f"نام: <b>{escape(info['title'])}</b>\n\nربات باید در این چت ادمین باشد تا ارسال کار کند.")
         kb = ikb([[("افزودن", "ch:ok")], [("نام دلخواه", "ch:rename"), ("لغو", "ch:cancel")]])
     elif info["exists"] is False:
-        txt = ("پیدا نشد. یا آیدی اشتباه است یا ربات روبیکا هنوز در کانال ادمین نیست.\n"
-               "آیدی دیگری بفرستید، یا کانال را با کد وصل کنید.")
+        txt = ("با این آیدی نتوانستم شناسه‌ی داخلی کانال را از روبیکا بگیرم (یا ربات هنوز ادمین کانال نیست).\n"
+               "ساده‌ترین راه: «اتصال با کد» را بزنید و کد را داخل کانال بفرستید؛ شناسه خودکار گرفته می‌شود.")
         kb = ikb([[("اتصال با کد", "ch:rcode")], [("لغو", "ch:cancel")]])
     else:
-        txt = "اتصال به روبیکا برقرار نشد. کمی بعد دوباره تلاش کنید."
-        kb = ikb([[("افزودن بدون بررسی", "ch:force")], [("لغو", "ch:cancel")]])
+        txt = "اتصال به روبیکا برقرار نشد. کمی بعد دوباره آیدی را بفرستید."
+        kb = ikb([[("لغو", "ch:cancel")]])
     await m.answer(txt, reply_markup=kb)
 
 

@@ -42,7 +42,7 @@ def _unwrap(r: httpx.Response, token: str):
     if not isinstance(j, dict) or str(j.get("status", "")).upper() != "OK":
         desc = ""
         if isinstance(j, dict):
-            desc = " ".join(str(x) for x in (j.get("status"), j.get("dev_message")) if x)
+            desc = " ".join(str(j[k]) for k in ("status", "status_det", "dev_message", "message") if j.get(k))
         raise RubikaError(_clean(desc or f"HTTP {r.status_code}", token))
     data = j.get("data")
     return data if isinstance(data, dict) else {}
