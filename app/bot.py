@@ -21,7 +21,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
-from . import eitaa, rubika, rubika_hub
+from . import agent, ai, eitaa, rubika, rubika_hub
 from .botutil import (extract_content, fmt_dt, norm_digits, normalize_chat_id, parse_when,
                       to_utc_naive)
 from .crypto import enc
@@ -36,10 +36,12 @@ B_CHAN, B_APPS = "کانال‌ها", "برنامه‌های متصل"
 B_BUY, B_ME = "اشتراک", "حساب من"
 B_SUP, B_HELP = "پشتیبانی", "راهنما"
 B_ADMIN = "مدیریت"
-MENU_TEXTS = {B_NEW, B_SCHED, B_CHAN, B_APPS, B_BUY, B_ME, B_SUP, B_HELP, B_ADMIN}
+B_SRC, B_AI = "کانال‌های محتوا", "دستیار هوشمند"
+MENU_TEXTS = {B_NEW, B_SCHED, B_CHAN, B_APPS, B_BUY, B_ME, B_SUP, B_HELP, B_ADMIN, B_SRC, B_AI}
 _OLD = {B_NEW: "📝 پست جدید", B_SCHED: "📅 زمان‌بندی‌شده‌ها", B_CHAN: "📢 کانال‌ها",
         B_APPS: "توکن ایتایار", B_BUY: "💳 خرید اشتراک", B_ME: "👤 حساب من",
-        B_SUP: "☎️ پشتیبانی", B_HELP: "📖 راهنما", B_ADMIN: "🛠 مدیریت"}
+        B_SUP: "☎️ پشتیبانی", B_HELP: "📖 راهنما", B_ADMIN: "🛠 مدیریت",
+        B_SRC: B_SRC, B_AI: B_AI}
 
 
 def _btn(label: str):
@@ -53,6 +55,7 @@ PLAT = {"eitaa": "ایتا", "rubika": "روبیکا"}
 def menu_kb(is_admin: bool) -> ReplyKeyboardMarkup:
     rows = [[KeyboardButton(text=B_NEW), KeyboardButton(text=B_SCHED)],
             [KeyboardButton(text=B_CHAN), KeyboardButton(text=B_APPS)],
+            [KeyboardButton(text=B_SRC), KeyboardButton(text=B_AI)],
             [KeyboardButton(text=B_BUY), KeyboardButton(text=B_ME)],
             [KeyboardButton(text=B_SUP), KeyboardButton(text=B_HELP)]]
     if is_admin:
@@ -87,6 +90,18 @@ class NewPost(StatesGroup):
 
 class Pay(StatesGroup):
     receipt = State()
+
+
+class AddSource(StatesGroup):
+    lines = State()
+
+
+class AiChat(StatesGroup):
+    chat = State()
+
+
+class AgentEdit(StatesGroup):
+    brief = State()
 
 
 # ------------------------------------------------------------------ guard
@@ -184,6 +199,9 @@ async def btn_help(m: Message, state: FSMContext):
         "شناسه‌ی عددی آن را در «کانال‌ها» وارد کنید.\n\n"
         "<b>روبیکا</b>\n"
         "«برنامه‌های متصل ← روبیکا» را بزنید، ربات را ادمین کانال کنید و مراحل اتصال (کد + فوروارد یک پست) را انجام دهید.\n\n"
+        "<b>محتوا و هوش مصنوعی</b>\n"
+        "«کانال‌های محتوا» کانال‌های ایتایی منبع را نگه می‌دارد. «دستیار هوشمند» با شما گفتگو می‌کند، "
+        "منابع را می‌خواند، تبلیغ را کنار می‌گذارد و پست مناسب را منتشر یا پیشنهاد می‌دهد.\n\n"
         "<b>پست</b>\n"
         "متن یا فایل را بفرستید و «ارسال» یا «زمان‌بندی» را بزنید.\n\n"
         "<b>فرمت زمان</b> (وقت تهران)\n"
@@ -923,6 +941,207 @@ async def fallback(m: Message, is_admin: bool):
     await m.answer("از منوی پایین استفاده کنید 👇", reply_markup=menu_kb(is_admin))
 
 
+# ------------------------------------------------------------------ content sources
+SRC_FA = {"dup": "از قبل اضافه شده", "notfound": "پیدا نشد", "invalid": "آیدی معتبر نیست",
+          "private": "کانال خصوصی قابل خواندن نیست", "neterr": "اتصال به ایتا برقرار نشد",
+          "limit": f"حداکثر {agent.MAX_SOURCES} کانال", "noposts": "پستی قابل خواندن نبود (کانال عمومی نیست؟)"}
+
+
+def _src_kb(srcs) -> InlineKeyboardMarkup:
+    rows = [[(f"حذف · {s.title or s.username}", f"sr:del:{s.id}")] for s in srcs]
+    rows.append([("+ افزودن کانال محتوا", "sr:add")])
+    return ikb(rows)
+
+
+async def btn_sources(m: Message, state: FSMContext):
+    await state.clear()
+    srcs = await agent.user_sources(m.from_user.id)
+    if srcs:
+        lines = "\n".join(f"• <b>{escape(s.title or s.username)}</b> <code>{escape(s.username)}</code>" for s in srcs)
+        txt = f"<b>کانال‌های محتوا</b>\n\n{lines}"
+    else:
+        txt = ("<b>کانال‌های محتوا</b>\n\nکانال‌های ایتایی را که می‌خواهید دستیار از آن‌ها محتوا بردارد اضافه کنید.")
+    await m.answer(txt, reply_markup=_src_kb(srcs))
+
+
+async def cb_src_add(c: CallbackQuery, state: FSMContext):
+    await state.set_state(AddSource.lines)
+    await c.message.answer("لطفاً در هر خط آیدی یا لینک کانال مورد نظر در برنامه ایتا را وارد کنید.\n\n"
+                           "<code>@channel1\neitaa.com/channel2</code>\n\nلغو: /cancel")
+    await c.answer()
+
+
+async def st_src_lines(m: Message, state: FSMContext, is_admin: bool):
+    wait = await m.answer("در حال بررسی کانال‌ها...")
+    res = await agent.add_sources(m.from_user.id, m.text or "")
+    out = []
+    for r in res:
+        if r["status"] == "ok":
+            out.append(f"✓ <b>{escape(r['title'])}</b>")
+        elif r["status"] == "noposts":
+            out.append(f"✗ <b>{escape(r['title'])}</b> · {SRC_FA['noposts']}")
+        else:
+            out.append(f"✗ {escape(r['raw'][:60])} · {SRC_FA.get(r['status'], 'نامعتبر')}")
+    with contextlib.suppress(Exception):
+        await wait.delete()
+    await state.clear()
+    ok = sum(1 for r in res if r["status"] == "ok")
+    tail = "\n\nحالا از «دستیار هوشمند» بخواهید آن‌ها را بررسی کند." if ok else ""
+    await m.answer("\n".join(out or ["چیزی وارد نشد."]) + tail, reply_markup=menu_kb(is_admin))
+
+
+async def cb_src_del(c: CallbackQuery):
+    await agent.remove_source(c.from_user.id, int(c.data.split(":")[2]))
+    srcs = await agent.user_sources(c.from_user.id)
+    await safe_edit(c.message, "حذف شد.", _src_kb(srcs))
+    await c.answer()
+
+
+# ------------------------------------------------------------------ AI assistant + agent
+def _ai_kb() -> InlineKeyboardMarkup:
+    return ikb([[("تنظیمات عامل", "ag:view"), ("پاک‌کردن گفتگو", "ag:clear")], [("خروج", "ag:exit")]])
+
+
+async def btn_ai(m: Message, state: FSMContext, is_admin: bool, cfg: dict):
+    await state.clear()
+    if not ai.configured(cfg):
+        await m.answer("دستیار هوشمند هنوز توسط مدیر فعال نشده است.")
+        return
+    if not has_access(await get_user(m.from_user.id), is_admin):
+        await m.answer("اشتراک شما فعال نیست. از «اشتراک» تمدید کنید.")
+        return
+    await state.set_state(AiChat.chat)
+    await m.answer("<b>دستیار هوشمند</b>\n\nهر چه می‌خواهید بنویسید؛ مثلاً:\n"
+                   "• «کانال‌های منبعم را بررسی کن و بهترین پست امروز را در کانالم بگذار»\n"
+                   "• «برای کانال آشپزی‌ام یک متن جذاب بنویس»\n"
+                   "• «عامل خودکار را هر ۳ ساعت روشن کن»", reply_markup=_ai_kb())
+
+
+async def st_ai_chat(m: Message, state: FSMContext, is_admin: bool):
+    text = (m.text or "").strip()
+    if not text:
+        return
+    await m.bot.send_chat_action(m.chat.id, "typing")
+    reply = await agent.chat_turn(m.from_user.id, is_admin, manager, text)
+    for i in range(0, len(reply), 3800):
+        await m.answer(escape(reply[i:i + 3800]), reply_markup=_ai_kb() if i + 3800 >= len(reply) else None)
+
+
+async def _agent_view(uid: int) -> tuple[str, InlineKeyboardMarkup]:
+    ag = await agent.get_cfg(uid)
+    chans = {c.id: c for c in await agent.user_channels(uid)}
+    ch = chans.get(ag.channel_id)
+    n_src = len(await agent.user_sources(uid))
+    on = lambda v: "روشن" if v else "خاموش"  # noqa: E731
+    brief = escape(ag.brief[:200]) + ("…" if len(ag.brief) > 200 else "") if ag.brief else "مشخص نشده"
+    txt = (f"<b>عامل خودکار</b>\n\nوضعیت: {on(ag.enabled)}\n"
+           f"کانال مقصد: {escape(ch.title) + ' · ' + PLAT.get(ch.platform, '') if ch else 'انتخاب نشده'}\n"
+           f"منابع: {n_src} کانال\n"
+           f"انتشار: {'خودکار' if ag.auto else 'با تأیید شما'}\n"
+           f"بازنویسی: {on(ag.rewrite)}\n"
+           f"بررسی: هر {ag.interval_h} ساعت · حداکثر {ag.max_per_run} پست در هر دور\n\n"
+           f"موضوع و قوانین:\n{brief}")
+    kb = ikb([[(f"عامل: {on(ag.enabled)}", "ag:on"), (f"انتشار: {'خودکار' if ag.auto else 'با تأیید'}", "ag:auto")],
+              [(f"بازنویسی: {on(ag.rewrite)}", "ag:rw"), (f"بازه: {ag.interval_h} ساعت", "ag:int")],
+              [("کانال مقصد", "ag:chan"), ("موضوع و قوانین", "ag:brief")],
+              [("اجرای فوری", "ag:run"), ("بازگشت", "ag:back")]])
+    return txt, kb
+
+
+async def cb_ag(c: CallbackQuery, state: FSMContext, is_admin: bool, cfg: dict):
+    uid = c.from_user.id
+    act = c.data.split(":")[1]
+    if act == "exit":
+        await state.clear()
+        await safe_edit(c.message, "از دستیار خارج شدید.")
+        await c.message.answer("از منو ادامه دهید.", reply_markup=menu_kb(is_admin))
+        await c.answer()
+        return
+    if act == "clear":
+        await agent.clear_chat(uid)
+        await c.answer("گفتگو پاک شد.")
+        return
+    if act == "back":
+        await safe_edit(c.message, "به گفتگو برگشتید؛ هر چه می‌خواهید بنویسید.", _ai_kb())
+        await state.set_state(AiChat.chat)
+        await c.answer()
+        return
+    ag = await agent.get_cfg(uid)
+    if act == "on":
+        if not ag.enabled and (not ag.channel_id or not await agent.user_sources(uid)):
+            await c.answer("اول کانال مقصد و حداقل یک کانال محتوا لازم است.", show_alert=True)
+            return
+        await agent.save_cfg(uid, enabled=not ag.enabled)
+    elif act == "auto":
+        await agent.save_cfg(uid, auto=not ag.auto)
+    elif act == "rw":
+        await agent.save_cfg(uid, rewrite=not ag.rewrite)
+    elif act == "int":
+        opts = [1, 3, 6, 12, 24]
+        nxt = opts[(opts.index(ag.interval_h) + 1) % len(opts)] if ag.interval_h in opts else 6
+        await agent.save_cfg(uid, interval_h=nxt)
+    elif act == "chan":
+        chans = await agent.user_channels(uid)
+        if not chans:
+            await c.answer("اول یک کانال اضافه کنید.", show_alert=True)
+            return
+        await safe_edit(c.message, "کانال مقصد را انتخاب کنید:",
+                        ikb([[(f"{ch.title} · {PLAT.get(ch.platform)}", f"ag:ch:{ch.id}")] for ch in chans]))
+        await c.answer()
+        return
+    elif act == "ch":
+        cid = int(c.data.split(":")[2])
+        if cid in {ch.id for ch in await agent.user_channels(uid)}:
+            await agent.save_cfg(uid, channel_id=cid)
+    elif act == "brief":
+        await state.set_state(AgentEdit.brief)
+        await c.message.answer("موضوع کانالتان و قوانین انتخاب محتوا را بنویسید.\n"
+                               "مثال: «کانال خبری ورزشی؛ تبلیغ، خبر سیاسی و پست‌های بدون محتوا نمی‌خواهم»\n\nلغو: /cancel")
+        await c.answer()
+        return
+    elif act == "run":
+        await c.answer("در حال بررسی...")
+        res = await agent.curate(uid, manager, is_admin=is_admin)
+        await c.message.answer(escape(res))
+        return
+    txt, kb = await _agent_view(uid)
+    await safe_edit(c.message, txt, kb)
+    await c.answer()
+
+
+async def cb_ag_view(c: CallbackQuery):
+    txt, kb = await _agent_view(c.from_user.id)
+    await safe_edit(c.message, txt, kb)
+    await c.answer()
+
+
+async def st_ag_brief(m: Message, state: FSMContext):
+    await agent.save_cfg(m.from_user.id, brief=(m.text or "").strip()[:2000])
+    await state.set_state(AiChat.chat)
+    txt, kb = await _agent_view(m.from_user.id)
+    await m.answer("ذخیره شد.\n\n" + txt, reply_markup=kb)
+
+
+async def cb_cand(c: CallbackQuery, is_admin: bool):
+    _, act, cid = c.data.split(":")
+    async with Session() as s:
+        cand = await s.get(agent.Candidate, int(cid))
+        if not cand or cand.user_id != c.from_user.id or cand.status != "pending":
+            await c.answer("این پیشنهاد دیگر معتبر نیست.", show_alert=True)
+            return
+        if act == "ok" and not has_access(await s.get(User, c.from_user.id), is_admin):
+            await c.answer("اشتراک شما منقضی شده است.", show_alert=True)
+            return
+        cand.status = "approved" if act == "ok" else "rejected"
+        await s.commit()
+    if act == "ok":
+        pid = await agent.queue_post(cand.user_id, cand.channel_id, cand.text, cand.image_url)
+        await safe_edit(c.message, f"پست #{pid} در صف انتشار قرار گرفت.")
+    else:
+        await safe_edit(c.message, "رد شد.")
+    await c.answer()
+
+
 # ------------------------------------------------------------------ wiring
 def make_router() -> Router:
     r = Router()
@@ -944,6 +1163,8 @@ def make_router() -> Router:
     M(btn_sched, _btn(B_SCHED))
     M(btn_channels, _btn(B_CHAN))
     M(btn_apps, _btn(B_APPS))
+    M(btn_sources, _btn(B_SRC))
+    M(btn_ai, _btn(B_AI))
     M(btn_buy, _btn(B_BUY))
     M(btn_me, _btn(B_ME))
     M(btn_support, _btn(B_SUP))
@@ -953,6 +1174,9 @@ def make_router() -> Router:
     M(st_token, SetToken.token, F.text)
     M(st_chan_id, AddChannel.chat_id, F.text)
     M(st_chan_title, AddChannel.title, F.text)
+    M(st_src_lines, AddSource.lines, F.text)
+    M(st_ai_chat, AiChat.chat, F.text)
+    M(st_ag_brief, AgentEdit.brief, F.text)
     M(st_np_content, NewPost.content)
     M(st_np_title, NewPost.title, F.text)
     M(st_np_view, NewPost.view, F.text)
@@ -966,6 +1190,11 @@ def make_router() -> Router:
     C(cb_chan_platform, F.data.in_({"ch:p:eitaa", "ch:p:rubika"}))
     C(cb_chan_rcode, F.data == "ch:rcode")
     C(cb_app, F.data.startswith("ap:"))
+    C(cb_src_add, F.data == "sr:add")
+    C(cb_src_del, F.data.startswith("sr:del:"))
+    C(cb_ag_view, F.data == "ag:view")
+    C(cb_ag, F.data.startswith("ag:"))
+    C(cb_cand, F.data.startswith("cd:"))
     C(cb_chan_ok, F.data.in_({"ch:ok", "ch:force"}), AddChannel.chat_id)
     C(cb_chan_rename, F.data == "ch:rename", AddChannel.chat_id)
     C(cb_chan_cancel, F.data == "ch:cancel")

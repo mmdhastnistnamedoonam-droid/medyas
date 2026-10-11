@@ -10,7 +10,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 
-from . import config, rubika
+from . import ai, config, rubika
 from .bot import manager
 from .botutil import fmt_dt
 from .db import (DEFAULTS, Payment, Post, Session, User, get_settings, parse_ids, parse_plans,
@@ -106,12 +106,15 @@ async def settings_page(request: Request):
     cfg = await get_settings()
     token_hint = ("••••" + cfg["bot_token"][-4:]) if cfg["bot_token"] else ""
     rb_hint = ("••••" + cfg["rubika_bot_token"][-4:]) if cfg["rubika_bot_token"] else ""
-    return render(request, "settings.html", cfg=cfg, token_hint=token_hint, rb_hint=rb_hint)
+    ai_hint = ("••••" + cfg["ai_api_key"][-4:]) if cfg["ai_api_key"] else ""
+    return render(request, "settings.html", cfg=cfg, token_hint=token_hint, rb_hint=rb_hint, ai_hint=ai_hint)
 
 
 @router.post("/settings")
 async def settings_save(request: Request, csrf: str = Form(""), bot_token: str = Form(""),
-                        rubika_bot_token: str = Form(""),
+                        rubika_bot_token: str = Form(""), ai_provider: str = Form("anthropic"),
+                        ai_api_key: str = Form(""), ai_model: str = Form(""), ai_base_url: str = Form(""),
+                        ai_daily_limit: str = Form("40"),
                         admin_ids: str = Form(""), brand_name: str = Form(""),
                         welcome_text: str = Form(""), support_username: str = Form(""),
                         card_number: str = Form(""), card_owner: str = Form(""),
@@ -130,6 +133,21 @@ async def settings_save(request: Request, csrf: str = Form(""), bot_token: str =
               "welcome_text": welcome_text.strip(), "support_username": support_username.strip().lstrip("@"),
               "card_number": card_number.strip(), "card_owner": card_owner.strip(),
               "trial_days": trial_days.strip(), "plans": plans.strip()}
+    if ai_provider not in ("anthropic", "openai"):
+        ai_provider = "anthropic"
+    if not ai_daily_limit.strip().isdigit():
+        return back(request, "/settings", "سهمیه‌ی روزانه‌ی هوش مصنوعی باید عدد باشد (۰ = نامحدود).")
+    values.update(ai_provider=ai_provider, ai_model=ai_model.strip(), ai_base_url=ai_base_url.strip(),
+                  ai_daily_limit=ai_daily_limit.strip())
+    ai_note = ""
+    if ai_api_key.strip():
+        test = {**(await get_settings()), **values, "ai_api_key": ai_api_key.strip()}
+        try:
+            await ai.chat(test, "Reply with the single word OK.", [{"role": "user", "content": "ping"}], max_tokens=16)
+            values["ai_api_key"] = ai_api_key.strip()
+            ai_note = " · هوش مصنوعی متصل شد"
+        except ai.AIError as e:
+            ai_note = f" · کلید هوش مصنوعی پذیرفته نشد ({str(e)[:100]})"
     if bot_token.strip():  # blank = keep the stored token
         values["bot_token"] = bot_token.strip()
     rb_note = ""
@@ -143,7 +161,7 @@ async def settings_save(request: Request, csrf: str = Form(""), bot_token: str =
     await save_settings(values)
     ok = await manager.start()
     msg = ((f"ذخیره شد؛ ربات @{manager.username} روشن شد" if ok
-            else f"ذخیره شد، اما ربات روشن نشد: {manager.error}") + rb_note)
+            else f"ذخیره شد، اما ربات روشن نشد: {manager.error}") + rb_note + ai_note)
     return back(request, "/settings", msg)
 
 

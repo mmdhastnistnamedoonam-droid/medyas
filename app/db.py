@@ -79,6 +79,65 @@ class Payment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class Source(Base):
+    """An Eitaa channel the user wants content from."""
+    __tablename__ = "sources"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), index=True)
+    username: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(128), default="")
+
+
+class SeenPost(Base):
+    """Source posts the agent already looked at (so nothing is judged twice)."""
+    __tablename__ = "seen_posts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    post_key: Mapped[str] = mapped_column(String(160), index=True)
+
+
+class AgentCfg(Base):
+    __tablename__ = "agent_cfg"
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    channel_id: Mapped[int] = mapped_column(Integer, default=0)  # target channel (channels.id), 0 = none
+    brief: Mapped[str] = mapped_column(Text, default="")  # what the user's channel is about + rules
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto: Mapped[bool] = mapped_column(Boolean, default=False)  # publish without asking
+    rewrite: Mapped[bool] = mapped_column(Boolean, default=True)
+    interval_h: Mapped[int] = mapped_column(Integer, default=6)
+    max_per_run: Mapped[int] = mapped_column(Integer, default=2)
+    last_run: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class Candidate(Base):
+    """A post the agent picked, waiting for the user's OK (when auto-publish is off)."""
+    __tablename__ = "candidates"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    channel_id: Mapped[int] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(64), default="")
+    text: Mapped[str] = mapped_column(Text, default="")
+    image_url: Mapped[str] = mapped_column(String(512), default="")
+    status: Mapped[str] = mapped_column(String(10), default="pending")  # pending|approved|rejected
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ChatMsg(Base):
+    __tablename__ = "chat_msgs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    role: Mapped[str] = mapped_column(String(10))  # user | assistant
+    content: Mapped[str] = mapped_column(Text, default="")
+
+
+class AiUsage(Base):
+    __tablename__ = "ai_usage"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    day: Mapped[str] = mapped_column(String(10), index=True)
+    n: Mapped[int] = mapped_column(Integer, default=0)
+
+
 engine = create_async_engine(config.DATABASE_URL, pool_pre_ping=True)
 Session = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -96,6 +155,11 @@ async def init_db() -> None:
 DEFAULTS = {
     "bot_token": "",
     "rubika_bot_token": "",
+    "ai_provider": "anthropic",
+    "ai_api_key": "",
+    "ai_model": "",
+    "ai_base_url": "",
+    "ai_daily_limit": "40",
     "admin_ids": "",
     "brand_name": "ربات انتشار",
     "welcome_text": "",
@@ -105,7 +169,7 @@ DEFAULTS = {
     "trial_days": "3",
     "plans": "30:150000\n90:400000\n365:1400000",
 }
-SECRET_KEYS = {"bot_token", "rubika_bot_token"}
+SECRET_KEYS = {"bot_token", "rubika_bot_token", "ai_api_key"}
 
 
 async def get_settings(s: AsyncSession | None = None) -> dict[str, str]:

@@ -5,7 +5,7 @@ from html import escape
 
 from sqlalchemy import select, update
 
-from . import eitaa, rubika
+from . import eitaa, rubika, sources
 from .crypto import dec
 from .db import Channel, Post, Session, User, get_settings, utcnow
 
@@ -21,29 +21,36 @@ async def recover() -> None:
         await s.commit()
 
 
+async def _file_bytes(post: Post, bot) -> bytes:
+    """File content: 'url:<image>' (picked by the agent from a source channel) or a Telegram file_id."""
+    if post.file_id.startswith("url:"):
+        data = await sources.download_image(post.file_id[4:])
+        if not data:
+            raise RuntimeError("دانلود عکس از کانال منبع ناموفق بود")
+        return data
+    if bot is None:
+        raise RuntimeError("ربات تلگرام فعال نیست؛ دانلود فایل ممکن نشد")
+    buf = await bot.download(post.file_id)
+    if buf is None:
+        raise RuntimeError("دانلود فایل از تلگرام ناموفق بود")
+    return buf.read()
+
+
 async def _deliver(post: Post, token: str, chat_id: str, bot) -> dict:
     kw = dict(title=post.title or None, silent=post.silent, pin=post.pin,
               view_delete=post.view_delete or None)
     if post.kind == "text":
         return await eitaa.send_message(token, chat_id, post.text, **kw)
-    if bot is None:
-        raise eitaa.EitaaError("ربات تلگرام فعال نیست؛ دانلود فایل ممکن نشد")
-    buf = await bot.download(post.file_id)
-    if buf is None:
-        raise eitaa.EitaaError("دانلود فایل از تلگرام ناموفق بود")
-    return await eitaa.send_file(token, chat_id, post.file_name or "file", buf.read(),
+    content = await _file_bytes(post, bot)
+    return await eitaa.send_file(token, chat_id, post.file_name or "file", content,
                                  caption=post.text or None, **kw)
 
 
 async def _deliver_rubika(post: Post, token: str, chat_id: str, bot) -> dict:
     if post.kind == "text":
         return await rubika.send_message(token, chat_id, post.text, silent=post.silent)
-    if bot is None:
-        raise rubika.RubikaError("ربات تلگرام فعال نیست؛ دانلود فایل ممکن نشد")
-    buf = await bot.download(post.file_id)
-    if buf is None:
-        raise rubika.RubikaError("دانلود فایل از تلگرام ناموفق بود")
-    return await rubika.send_file(token, chat_id, post.file_name or "file", buf.read(),
+    content = await _file_bytes(post, bot)
+    return await rubika.send_file(token, chat_id, post.file_name or "file", content,
                                   caption=post.text or None)
 
 
