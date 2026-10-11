@@ -183,7 +183,7 @@ async def btn_help(m: Message, state: FSMContext):
         "توکن را از eitaayar.ir بگیرید و در «برنامه‌های متصل ← ایتا» ثبت کنید. کانال باید در پنل ایتایار تعریف شده باشد؛ "
         "شناسه‌ی عددی آن را در «کانال‌ها» وارد کنید.\n\n"
         "<b>روبیکا</b>\n"
-        "«برنامه‌های متصل ← روبیکا» را بزنید، ربات را عضو و ادمین کانال کنید و آیدی کانال را بفرستید.\n\n"
+        "«برنامه‌های متصل ← روبیکا» را بزنید، ربات را ادمین کانال کنید و مراحل اتصال (کد + فوروارد یک پست) را انجام دهید.\n\n"
         "<b>پست</b>\n"
         "متن یا فایل را بفرستید و «ارسال» یا «زمان‌بندی» را بزنید.\n\n"
         "<b>فرمت زمان</b> (وقت تهران)\n"
@@ -218,6 +218,14 @@ async def btn_me(m: Message, state: FSMContext, is_admin: bool):
 
 
 # ------------------------------------------------------------------ token
+def _rb_link_text(bot_ref: str, code: str) -> str:
+    return (f"<b>اتصال کانال روبیکا</b>\n\n"
+            f"۱. {bot_ref} را عضو کانال و <b>ادمین</b> کنید.\n"
+            f"۲. در روبیکا به همین ربات پیام بدهید و این کد را بفرستید:\n<code>{code}</code>\n"
+            f"۳. یک پست از کانال را برای ربات <b>فوروارد</b> کنید.\n\n"
+            "کد ۱۵ دقیقه اعتبار دارد. بعد از اتصال، همین‌جا خبر می‌دهم.")
+
+
 async def _rb_state(cfg: dict) -> tuple[bool, str]:
     token = cfg["rubika_bot_token"].strip()
     if not token:
@@ -271,7 +279,7 @@ async def cb_app(c: CallbackQuery, state: FSMContext):
             await safe_edit(c.message,
                             f"<b>روبیکا</b>\n\nنیازی به توکن نیست.\n"
                             f"۱. {bot_ref} را به کانال اضافه و <b>ادمین</b> کنید.\n"
-                            f"۲. «افزودن کانال» را بزنید و آیدی کانال را بفرستید.\n\n"
+                            f"۲. «افزودن کانال» را بزنید؛ کد و مراحل اتصال را می‌دهم.\n\n"
                             f"کانال‌های متصل: {n}",
                             ikb([[("+ افزودن کانال روبیکا", "ch:p:rubika")], [("بازگشت", "ap:home")]]))
     await c.answer()
@@ -370,18 +378,16 @@ async def cb_chan_platform(c: CallbackQuery, state: FSMContext):
         await c.answer()
         return
     bot_ref = f"@{escape(uname)}" if uname else "ربات روبیکا"
-    await safe_edit(c.message,
-                    f"آیدی کانال روبیکا را بفرستید (مثل <code>@mychannel</code> یا لینک کانال).\n\n"
-                    f"قبلش مطمئن شوید {bot_ref} در کانال <b>ادمین</b> است.\n\nلغو: /cancel")
+    code = rubika_hub.new_code(c.from_user.id)
+    await safe_edit(c.message, _rb_link_text(bot_ref, code) + "\n\nیا اگر شناسه‌ی کانال (c0...) را دارید همین‌جا بفرستید. لغو: /cancel")
     await c.answer()
 
 
 async def cb_chan_rcode(c: CallbackQuery, state: FSMContext):
-    """Fallback when the ID can't be resolved: post a one-time code inside the channel."""
-    code = rubika_hub.new_code(c.from_user.id)
-    await safe_edit(c.message,
-                    f"این کد را داخل کانال بفرستید (ربات باید ادمین باشد):\n<code>{code}</code>\n\n"
-                    "کد ۱۵ دقیقه اعتبار دارد و بعد از اتصال خودکار پاک می‌شود.")
+    """Show the link code + steps again (used when an typed ID can't be resolved)."""
+    on, uname = await _rb_state(await get_settings())
+    bot_ref = f"@{escape(uname)}" if uname else "ربات روبیکا"
+    await safe_edit(c.message, _rb_link_text(bot_ref, rubika_hub.new_code(c.from_user.id)))
     await c.answer()
 
 
@@ -416,8 +422,8 @@ async def _rubika_lookup(m: Message, state: FSMContext, cid: str):
         kb = ikb([[("افزودن", "ch:ok")], [("نام دلخواه", "ch:rename"), ("لغو", "ch:cancel")]])
     elif info["exists"] is False:
         txt = ("با این آیدی نتوانستم شناسه‌ی داخلی کانال را از روبیکا بگیرم (یا ربات هنوز ادمین کانال نیست).\n"
-               "ساده‌ترین راه: «اتصال با کد» را بزنید و کد را داخل کانال بفرستید؛ شناسه خودکار گرفته می‌شود.")
-        kb = ikb([[("اتصال با کد", "ch:rcode")], [("لغو", "ch:cancel")]])
+               "راه مطمئن: «اتصال با کد» را بزنید و مراحل (کد + فوروارد یک پست کانال) را انجام دهید.")
+        kb = ikb([[("اتصال با کد و فوروارد", "ch:rcode")], [("لغو", "ch:cancel")]])
     else:
         txt = "اتصال به روبیکا برقرار نشد. کمی بعد دوباره آیدی را بفرستید."
         kb = ikb([[("لغو", "ch:cancel")]])
